@@ -1,8 +1,7 @@
 import random
 import numpy as np
+import math
 import AI
-import plotly.plotly as py
-import matplotlib.pyplot as plt
 
 def get_size_of_penalty(penalty_cards):
     penalty = 0
@@ -37,12 +36,10 @@ class Deck:
 class Player:
     cards = None
     penalty = None
-    random = None
 
-    def __init__(self, random=False):
+    def __init__(self):
         self.cards = []
         self.penalty = 0
-        self.random = random
 
     def add_card(self, card):
         self.cards.append(card)
@@ -51,8 +48,39 @@ class Player:
         if card in self.cards:
             self.cards.remove(card)
 
-    def choose_card(self, game):
-        if not self.random:
+    def choose_card(self, game, epsilon=0.0):
+        chosen = np.random.choice(self.cards)
+
+        self.remove_card(chosen)
+        return chosen
+
+    def add_to_penalty(self, penalty_cards):
+        self.penalty += get_size_of_penalty(penalty_cards)
+
+    def __str__(self):
+        return str(self.cards)
+
+
+class GreedyPlayer(Player):
+    def choose_card(self, game, epsilon=0.0):
+        mindif = -1
+        chosen = 0
+        for card in self.cards:
+            dif = -1
+            for slot in game.board.slots:
+                if slot[0][-1] < card:
+                    dif = card - slot[0][-1]
+            if dif < mindif or mindif < 0:
+                mindif = dif
+                chosen = card
+
+        self.remove_card(chosen)
+        return chosen
+
+
+class AIPlayer(Player):
+    def choose_card(self, game, epsilon=0.0):
+        if np.random.random() < (1.0 - epsilon):
             state = game.get_state()
             qvals = model.predict(state.reshape(1, 456), batch_size=1)
             indexes = self.cards.copy()
@@ -66,11 +94,14 @@ class Player:
         self.remove_card(chosen)
         return chosen
 
-    def add_to_penalty(self, penaltyCards):
-        self.penalty += get_size_of_penalty(penaltyCards)
 
-    def __str__(self):
-        return str(self.cards)
+class Human(Player):
+    def choose_card(self, game, epsilon=0.0):
+        print("Which card do you want to play?")
+        print(self.cards)
+        chosen = int(input())
+        self.remove_card(chosen)
+        return chosen
 
 
 class Board:
@@ -130,21 +161,30 @@ class Game:
     players = None
     board = None
 
-    def __init__(self, number_of_players=2, random_players=0):
+    def __init__(self, players="A,A"):
         self.deck = Deck()
         self.players = []
         self.board = Board()
-        self.deal_hands(number_of_players, random_players)
+        self.deal_hands(players)
         self.board.fill_slots(deck=self.deck)
 
-    def deal_hands(self, number_of_players=2, random_players=0):
-        if number_of_players > 10 or number_of_players < 1:
+    def deal_hands(self, players):
+        players = players.split(",")
+        if len(players) < 2 or len(players) > 10:
             print("Not a valid number of players. [2-10]")
 
-        for i in range(number_of_players-random_players):
-            self.players.append(Player(random=False))
-        for i in range(random_players):
-            self.players.append(Player(random=True))
+        for p in players:
+            p = p.strip()
+            if p == "R":
+                self.players.append(Player())
+            elif p == "A":
+                self.players.append(AIPlayer())
+            elif p == "G":
+                self.players.append(GreedyPlayer())
+            elif p == "H":
+                self.players.append(Human())
+            else:
+                print("Not a valid number of players. [2-10]")
 
         for hand in self.players[:]:
             for i in range(10):
@@ -160,19 +200,21 @@ class Game:
     def print_board(self):
         print("Board: " + str(self.board))
 
-    def play_game(self, history=None, verbose=False):
+    def play_game(self, history=None, epsilon=0.0, verbose=False):
         if history is None:
             history = []
 
         for i in range(10):
-            self.play_round(history, verbose)
+            self.play_round(history, epsilon=epsilon, verbose=verbose)
             if verbose:
                 self.print_hands()
                 self.print_board()
 
-    def play_round(self, history=None, verbose=False):
+    def play_round(self, history=None, epsilon=0.0, verbose=False):
         if history is None:
             history = []
+
+        card_and_penalty = []
 
         old_state = self.get_state()
         old_cards = []
@@ -181,7 +223,7 @@ class Game:
 
         cards_this_turn = []
         for i, hand in enumerate(self.players):
-            chosen_card = hand.choose_card(self)
+            chosen_card = hand.choose_card(self, epsilon=epsilon)
             cards_this_turn.append((chosen_card, i))
             if verbose:
                 print("{}. player pick card {}.".format(i, chosen_card))
@@ -191,7 +233,9 @@ class Game:
             for card in cards_this_turn:
                 if penalty[1] == card[1]:
                     new_cards = self.players[card[1]].cards.copy()
-                    history.append((old_state, old_cards[card[1]], card[0], -penalty[0], self.get_state(), new_cards))
+                    card_and_penalty.append([card[0], -penalty[0], self.get_state(), new_cards])
+
+        history.append([old_state, card_and_penalty])
 
     def put_cards_on_board(self, cards, verbose=False):
         penalties = []
@@ -226,6 +270,7 @@ class Game:
             penalties[i] = player.penalty
         return penalties
 
+
 def state_to_one_hot(number, num_categories):
     arr = np.zeros(shape=(num_categories))
     arr[number - 1] = 1
@@ -233,15 +278,20 @@ def state_to_one_hot(number, num_categories):
 
 
 def train():
-    epochs = 2000
+    epochs = 1000
     gamma = 0.25
+    epsilon = 0.1
     history_size = 5000
     history = []
 
     for i in range(epochs):
-        batch_size = 500
-        game = Game(np.random.randint(2, 11))
-        game.play_game(history)
+        epsilon = math.exp(-float(i) / epochs) - (1/math.e)
+        batch_size = 250
+        players = "A"
+        for j in range(np.random.randint(1,10)):
+            players += ",A"
+        game = Game(players)
+        game.play_game(history, epsilon=epsilon)
         if len(history) > history_size:
             history = history[-history_size:]
         if batch_size > len(history):
@@ -250,24 +300,28 @@ def train():
         x_train = []
         y_train = []
         for memory in minibatch:
-            old_state, old_cards, action, reward, new_state, new_cards = memory
+            old_state, action_reward_pairs = memory
             old_qvals = model.predict(old_state.reshape(1, 456), batch_size=1)
 
             y = np.zeros((1, 104))
             y[:] = old_qvals[:]
 
-            if len(new_cards) == 0:
-                update = reward
-            else:
-                new_qvals = model.predict(new_state.reshape(1, 456), batch_size=1)
+            for action_reward in action_reward_pairs:
+                action, reward, new_state, new_cards = action_reward
 
-                indexes = new_cards.copy()
-                indexes[:] = [x - 1 for x in indexes]
-                possible_qvals = new_qvals[:, indexes]
-                max_new_qval = np.max(possible_qvals)
-                update = reward + gamma * max_new_qval
+                if len(new_cards) == 0:
+                    update = reward
+                else:
+                    new_qvals = model.predict(new_state.reshape(1, 456), batch_size=1)
 
-            y[0][action - 1] = update
+                    indexes = new_cards.copy()
+                    indexes[:] = [x - 1 for x in indexes]
+                    possible_qvals = new_qvals[:, indexes]
+                    max_new_qval = np.max(possible_qvals)
+                    update = reward + gamma * max_new_qval
+
+                y[0][action - 1] = update
+
             x_train.append(old_state.reshape(456, ))
             y_train.append(y.reshape(104, ))
 
@@ -278,18 +332,20 @@ def train():
         model.fit(x_train, y_train, batch_size=batch_size, nb_epoch=1, verbose=1)
 
 
-model = AI.load_model()
+model = AI.AI.load_model()
 
-#train()
+train()
 
-AI.save_model(model)
+AI.AI.save_model(model)
 
-number_of_games = 10000
-statistics = np.empty(shape=(number_of_games,10), dtype=int)
+number_of_games = 5000
+players = "A,R,G,G,G"
+number_of_players = 5
+statistics = np.empty(shape=(number_of_games, number_of_players), dtype=int)
 for i in range(number_of_games):
     print("Game #: {}".format(i))
-    game = Game(10, random_players=8)
-    game.play_game(verbose=False)
+    game = Game(players)
+    game.play_game(verbose=False, epsilon=0)
     pens = game.get_penalties()
     statistics[i, :] = pens
 
@@ -298,8 +354,3 @@ variance = np.var(statistics, axis=0)
 
 for i in range(len(mean)):
     print("Player {}'s scores have a mean of {} and variance of {}.".format(i, mean[i], variance[i]))
-#fig = plt.figure()
-
-#n, bins, patches = plt.hist(mean)
-
-#plt.show()
