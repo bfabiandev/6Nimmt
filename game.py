@@ -3,6 +3,7 @@ import numpy as np
 import math
 import AI
 
+
 def get_size_of_penalty(penalty_cards):
     penalty = 0
     for card in penalty_cards:
@@ -277,7 +278,7 @@ def state_to_one_hot(number, num_categories):
     return arr
 
 
-def train():
+def train_rl():
     epochs = 1000
     gamma = 0.25
     epsilon = 0.1
@@ -285,10 +286,10 @@ def train():
     history = []
 
     for i in range(epochs):
-        epsilon = math.exp(-float(i) / epochs) - (1/math.e)
+        epsilon = math.exp(-float(i) / epochs) - (1 / math.e)
         batch_size = 250
         players = "A"
-        for j in range(np.random.randint(1,10)):
+        for j in range(np.random.randint(1, 10)):
             players += ",A"
         game = Game(players)
         game.play_game(history, epsilon=epsilon)
@@ -332,9 +333,86 @@ def train():
         model.fit(x_train, y_train, batch_size=batch_size, nb_epoch=1, verbose=1)
 
 
+def test(weights):
+    epochs = 10
+    pen = 0.0
+    model.set_weights(weights)
+
+    #print("Start testing...")
+
+    for n in range(1, 10):
+        players = "A"
+        for j in range(n):
+            players += ",A"
+
+        for i in range(int(epochs / 9)):
+            game = Game(players)
+            game.play_game()
+            pen += game.get_penalties()[0]
+
+    for n in range(1, 10):
+        players = "A"
+        for j in range(n):
+            players += ",G"
+
+        for i in range(int(epochs / 9)):
+            game = Game(players)
+            game.play_game()
+            pen += game.get_penalties()[0]
+
+
+    pen /= 2 * epochs
+
+    #print("Finished testing...")
+
+    return pen
+
+
+def train_es():
+    epochs = 1000
+    gamma = 0.25
+
+    npop = 25  # population size
+    sigma = 0.1  # noise standard deviation
+    alpha = 0.01  # learning rate
+
+    weights = model.get_weights()  # hyperparameters
+
+    for i in range(300):
+
+        # print current fitness of the most likely parameter setting
+        if i % 1 == 0:
+            print('iter %d. reward: %f' % (i, test(weights)))
+
+        weight_array = []
+        for j in range(npop):
+            new_weights = weights.copy()
+            for layer in new_weights:
+                layer += sigma * np.random.randn(*layer.shape)
+
+            weight_array.append(new_weights.copy())
+
+        # initialize memory for a population of w's, and their rewards
+        R = np.zeros(npop)
+        for j in range(npop):
+            w_try = weight_array[j]
+            R[j] = test(w_try)  # evaluate the jittered version
+
+        # standardize the rewards to have a gaussian distribution
+        A = (R - np.mean(R)) / np.std(R)
+        # perform the parameter update. The matrix multiply below
+        # is just an efficient way to sum up all the rows of the noise matrix N,
+        # where each row N[j] is weighted by A[j]
+
+        for j, layer in enumerate(weights):
+            for w in weight_array:
+                layer -= alpha / (npop * sigma) * w[j]*A[j]
+
+        model.set_weights(weights)
+
 model = AI.AI.load_model()
 
-train()
+train_es()
 
 AI.AI.save_model(model)
 
