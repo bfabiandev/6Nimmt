@@ -333,8 +333,7 @@ def train_rl():
         model.fit(x_train, y_train, batch_size=batch_size, nb_epoch=1, verbose=1)
 
 
-def test(weights):
-    epochs = 10
+def test(weights, epochs=10):
     pen = 0.0
     model.set_weights(weights)
 
@@ -369,20 +368,18 @@ def test(weights):
 
 
 def train_es():
-    epochs = 1000
-    gamma = 0.25
 
     npop = 25  # population size
     sigma = 0.1  # noise standard deviation
-    alpha = 0.01  # learning rate
+    alpha = 0.005  # learning rate
 
     weights = model.get_weights()  # hyperparameters
 
-    for i in range(300):
+    for i in range(30):
 
         # print current fitness of the most likely parameter setting
         if i % 1 == 0:
-            print('iter %d. reward: %f' % (i, test(weights)))
+            print('iter %d. reward: %f' % (i, test(weights, epochs=25)))
 
         weight_array = []
         for j in range(npop):
@@ -406,7 +403,8 @@ def train_es():
 
         for j, layer in enumerate(weights):
             for w in weight_array:
-                layer -= alpha / (npop * sigma) * w[j]*A[j]
+                td = alpha / (npop * sigma) * w[j]*A[j]
+                layer -= td
 
         model.set_weights(weights)
 
@@ -416,7 +414,7 @@ train_es()
 
 AI.AI.save_model(model)
 
-number_of_games = 5000
+number_of_games = 2500
 players = "A,R,G,G,G"
 number_of_players = 5
 statistics = np.empty(shape=(number_of_games, number_of_players), dtype=int)
